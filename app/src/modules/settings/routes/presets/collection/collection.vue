@@ -23,7 +23,7 @@
 						<v-button secondary @click="confirmDelete = false">
 							{{ t('cancel') }}
 						</v-button>
-						<v-button class="action-delete" :loading="deleting" @click="deleteSelection">
+						<v-button kind="danger" :loading="deleting" @click="deleteSelection">
 							{{ t('delete_label') }}
 						</v-button>
 					</v-card-actions>
@@ -209,7 +209,7 @@ export default defineComponent({
 						},
 					});
 					presetsRaw.value = response.data.data;
-				} catch (err) {
+				} catch (err: any) {
 					unexpectedError(err);
 				} finally {
 					loading.value = false;

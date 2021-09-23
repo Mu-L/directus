@@ -1,4 +1,3 @@
-import argon2 from 'argon2';
 import { format, parseISO } from 'date-fns';
 import Joi from 'joi';
 import { Knex } from 'knex';
@@ -10,6 +9,11 @@ import { AbstractServiceOptions, Item, PrimaryKey, Query, SchemaOverview, Altera
 import { Accountability } from '@directus/shared/types';
 import { toArray } from '@directus/shared/utils';
 import { ItemsService } from './items';
+import { unflatten } from 'flat';
+import { isNativeGeometry } from '../utils/geometry';
+import { getGeometryHelper } from '../database/helpers/geometry';
+import { parse as wktToGeoJSON } from 'wellknown';
+import { generateHash } from '../utils/generate-hash';
 
 type Action = 'create' | 'read' | 'update';
 
@@ -19,6 +23,7 @@ type Transformers = {
 		value: any;
 		payload: Partial<Item>;
 		accountability: Accountability | null;
+		specials: string[];
 	}) => Promise<any>;
 };
 
@@ -44,9 +49,8 @@ export class PayloadService {
 	public transformers: Transformers = {
 		async hash({ action, value }) {
 			if (!value) return;
-
 			if (action === 'create' || action === 'update') {
-				return await argon2.hash(String(value));
+				return await generateHash(String(value));
 			}
 
 			return value;
@@ -108,8 +112,7 @@ export class PayloadService {
 		},
 		async csv({ action, value }) {
 			if (!value) return;
-			if (action === 'read') return value.split(',');
-
+			if (action === 'read' && Array.isArray(value) === false) return value.split(',');
 			if (Array.isArray(value)) return value.join(',');
 			return value;
 		},
@@ -121,7 +124,7 @@ export class PayloadService {
 		action: Action,
 		payload: Partial<Item> | Partial<Item>[]
 	): Promise<Partial<Item> | Partial<Item>[]> {
-		const processedPayload = toArray(payload);
+		let processedPayload = toArray(payload);
 
 		if (processedPayload.length === 0) return [];
 
@@ -148,17 +151,22 @@ export class PayloadService {
 			})
 		);
 
-		await this.processDates(processedPayload, action);
+		this.processGeometries(processedPayload, action);
+		this.processDates(processedPayload, action);
 
 		if (['create', 'update'].includes(action)) {
 			processedPayload.forEach((record) => {
 				for (const [key, value] of Object.entries(record)) {
-					if (Array.isArray(value) || (typeof value === 'object' && value instanceof Date !== true && value !== null)) {
-						record[key] = JSON.stringify(value);
+					if (Array.isArray(value) || (typeof value === 'object' && !(value instanceof Date) && value !== null)) {
+						if (!value.isRawInstance) {
+							record[key] = JSON.stringify(value);
+						}
 					}
 				}
 			});
 		}
+
+		processedPayload = processedPayload.map((item: Record<string, any>) => unflatten(item, { delimiter: '->' }));
 
 		if (Array.isArray(payload)) {
 			return processedPayload;
@@ -185,6 +193,7 @@ export class PayloadService {
 					value,
 					payload,
 					accountability,
+					specials: fieldSpecials,
 				});
 			}
 		}
@@ -193,13 +202,39 @@ export class PayloadService {
 	}
 
 	/**
+	 * Native geometries are stored in custom binary format. We need to insert them with
+	 * the function st_geomfromtext. For this to work, that function call must not be
+	 * escaped. It's therefore placed as a Knex.Raw object in the payload. Thus the need
+	 * to check if the value is a raw instance before stringifying it in the next step.
+	 */
+	processGeometries<T extends Partial<Record<string, any>>[]>(payloads: T, action: Action): T {
+		const helper = getGeometryHelper();
+
+		const process =
+			action == 'read'
+				? (value: any) => {
+						if (typeof value === 'string') return wktToGeoJSON(value);
+				  }
+				: (value: any) => helper.fromGeoJSON(typeof value == 'string' ? JSON.parse(value) : value);
+
+		const fieldsInCollection = Object.entries(this.schema.collections[this.collection].fields);
+		const geometryColumns = fieldsInCollection.filter(([_, field]) => isNativeGeometry(field));
+
+		for (const [name] of geometryColumns) {
+			for (const payload of payloads) {
+				if (payload[name]) {
+					payload[name] = process(payload[name]);
+				}
+			}
+		}
+
+		return payloads;
+	}
+	/**
 	 * Knex returns `datetime` and `date` columns as Date.. This is wrong for date / datetime, as those
 	 * shouldn't return with time / timezone info respectively
 	 */
-	async processDates(
-		payloads: Partial<Record<string, any>>[],
-		action: Action
-	): Promise<Partial<Record<string, any>>[]> {
+	processDates(payloads: Partial<Record<string, any>>[], action: Action): Partial<Record<string, any>>[] {
 		const fieldsInCollection = Object.entries(this.schema.collections[this.collection].fields);
 
 		const dateColumns = fieldsInCollection.filter(([_name, field]) =>
@@ -637,5 +672,23 @@ export class PayloadService {
 		}
 
 		return { revisions };
+	}
+
+	/**
+	 * Transforms the input partial payload to match the output structure, to have consistency
+	 * between delta and data
+	 */
+	async prepareDelta(data: Partial<Item>): Promise<string> {
+		let payload = cloneDeep(data);
+
+		for (const key in payload) {
+			if (payload[key]?.isRawInstance) {
+				payload[key] = payload[key].bindings[0];
+			}
+		}
+
+		payload = await this.processValues('read', payload);
+
+		return JSON.stringify(payload);
 	}
 }

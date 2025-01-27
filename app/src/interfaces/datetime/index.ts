@@ -1,4 +1,4 @@
-import { defineInterface } from '@directus/utils';
+import { defineInterface } from '@directus/extensions';
 import InterfaceDateTime from './datetime.vue';
 import PreviewSVG from './preview.svg?raw';
 
@@ -12,10 +12,6 @@ export default defineInterface({
 	group: 'selection',
 	options: ({ field }) => {
 		if (field.type === 'date') {
-			if (field.meta?.options) {
-				field.meta.options = {};
-			}
-
 			return [];
 		}
 
@@ -29,7 +25,7 @@ export default defineInterface({
 					interface: 'boolean',
 				},
 				schema: {
-					default_value: 'false',
+					default_value: false,
 				},
 			},
 			{
@@ -41,7 +37,7 @@ export default defineInterface({
 					interface: 'boolean',
 				},
 				schema: {
-					default_value: 'true',
+					default_value: true,
 				},
 			},
 		];

@@ -10,7 +10,7 @@ export type UsableCustomSelection = {
 export function useCustomSelection(
 	currentValue: Ref<string | null>,
 	items: Ref<any[]>,
-	emit: (event: string | null) => void
+	emit: (event: string | null) => void,
 ): UsableCustomSelection {
 	const localOtherValue = ref('');
 
@@ -56,7 +56,7 @@ type UsableCustomSelectionMultiple = {
 export function useCustomSelectionMultiple(
 	currentValues: Ref<string[] | null>,
 	items: Ref<any[]>,
-	emit: (event: string[] | null) => void
+	emit: (event: string[] | null) => void,
 ): UsableCustomSelectionMultiple {
 	const otherValues = ref<OtherValue[]>([]);
 
@@ -64,25 +64,25 @@ export function useCustomSelectionMultiple(
 		currentValues,
 		(newValue) => {
 			if (newValue === null) return;
-			if (Array.isArray(newValue) === false) return;
+			if (!Array.isArray(newValue)) return;
 			if (items.value === null) return;
 
 			(newValue as string[]).forEach((value) => {
 				if (items.value === null) return;
 				const values = items.value.map((item) => item.value);
-				const existsInValues = values.includes(value) === true;
+				const existsInValues = values.includes(value);
 
-				if (existsInValues === false) {
+				if (!existsInValues) {
 					const other = otherValues.value.map((o) => o.value);
-					const existsInOtherValues = other.includes(value) === true;
+					const existsInOtherValues = other.includes(value);
 
-					if (existsInOtherValues === false) {
+					if (!existsInOtherValues) {
 						addOtherValue(value);
 					}
 				}
 			});
 		},
-		{ immediate: true }
+		{ immediate: true },
 	);
 
 	return { otherValues, addOtherValue, setOtherValue };
@@ -101,7 +101,7 @@ export function useCustomSelectionMultiple(
 		const previousValue = otherValues.value.find((o) => o.key === key);
 
 		const valueWithoutPrevious = ((currentValues.value || []) as string[]).filter(
-			(val) => val !== previousValue?.value
+			(val) => val !== previousValue?.value,
 		);
 
 		if (newValue === null) {
@@ -118,9 +118,11 @@ export function useCustomSelectionMultiple(
 				return otherValue;
 			});
 
-			const newEmitValue = [...valueWithoutPrevious, newValue];
-
-			emit(newEmitValue);
+			if (valueWithoutPrevious.length === currentValues.value?.length) {
+				emit(valueWithoutPrevious);
+			} else {
+				emit([...valueWithoutPrevious, newValue]);
+			}
 		}
 	}
 }
